@@ -1,5 +1,12 @@
-#!/usr/bin/python2.7
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
+
+# Copyright: (c) 2020, Univention GmbH
+# Written by Lukas Zumvorde <zumvorde@univention.de>
+# Based on univention_apps module written by Alexander Ulpts <ulpts@univention.de>
+
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 
 import sys
 import os
@@ -24,19 +31,23 @@ options:
   name:
     description:
     - 'The name of the app'
-  required: true
+    required: true
   state:
     description:
     - 'The desired state of the app / present, or absent'
-  required: true
+    required: true
   upgrade:
     description:
     - 'Upgrade the app if installed and upgradable'
-  required: false
+    required: false
+  auth_username:
+    description:
+    - 'The name of the user with witch to install apps (usually domain-admin)'
+    required: true
   auth_password:
     description:
     - 'The password needed to install apps (usually domain-admin)'
-  required: true
+    required: true
 '''
 
 EXAMPLES = '''
@@ -47,14 +58,14 @@ def check_ucs():
     ''' Check if system is actually UCS, return bool '''
     return platform.dist()[0].lower() == 'univention'
 
-def ansible_exec(action, appname=None, keyfile=None):
+def ansible_exec(action, appname=None, keyfile=None, username=None):
     ''' runs ansible's run_command(), choose from actions install, remove, upgrade '''
     univention_app_cmd = {
             'list' : "univention-app list --ids-only",
             'info' : "univention-app info --as-json",
-            'install' : "univention-app {} --noninteractive --pwdfile {} {}".format(action, keyfile, appname),
-            'remove' : "univention-app {} --noninteractive --pwdfile {} {}".format(action, keyfile, appname),
-            'upgrade' : "univention-app {} --noninteractive --pwdfile {} {}".format(action, keyfile, appname),
+            'install' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
+            'remove' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
+            'upgrade' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
             }
     return module.run_command(univention_app_cmd[action])
 
@@ -118,14 +129,34 @@ def main():
     global module # declare ansible-module and parameters globally
     module = AnsibleModule(
         argument_spec = dict(
-            state = dict(required=True, choices=['present', 'absent']),
-            name = dict(required=True),
-            upgrade = dict(required=False, default=False, type="bool"),
-            auth_password = dict(required=True, no_log=True),
+            name = dict(
+                type='str',
+                required=True
+                aliases=['app']
+            ),
+            state = dict(
+                type='str',
+                default='present',
+                choices=['present', 'absent']
+            ),
+            upgrade = dict(
+                type='bool',
+                required=False,
+                default=False
+            ),
+            auth_password = dict(
+                type="str",
+                required=True,
+                no_log=True
+            ),
+            auth_username = dict(
+                type="str",
+                required=True
+            ),
         )
     )
 
-    # first of all, this module should only run on UCS-systems
+    # This module should only run on UCS-systems
     if not check_ucs():
         changed = False
         return module.exit_json(
@@ -195,6 +226,7 @@ def main():
 
     else: # just in case ...
         module.fail_json(msg="an unknown error occured while handling {}".format(app_name))
+
 
 
 if __name__ == '__main__':

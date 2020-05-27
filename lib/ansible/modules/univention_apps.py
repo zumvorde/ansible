@@ -51,7 +51,40 @@ options:
 '''
 
 EXAMPLES = '''
-- univention_apps: name=wordpress state=present auth_password={{ pwd }} upgrade=True
+- name: Install nagios
+  univention_apps:
+    name: nagios
+    state: present
+    auth_username: Administrator
+    auth_password: secret
+
+- name: remove nagios
+  univention_apps:
+    name: nagios
+    state: absent
+    auth_username: Administrator
+    auth_password: secret
+
+- name: upgrade nagios
+  univention_apps:
+    name: nagios
+    state: present
+    upgrade: True
+    auth_username: Administrator
+    auth_password: secret
+'''
+
+RETURN = '''
+msg:
+    description: a return message
+    returned: success, failure
+    type: str
+    sample: Non-UCS-system detected. Nothing to do here.
+changed:
+    description: if any changes were performed
+    returned: success
+    type: bool
+    sample: True
 '''
 
 def check_ucs():
@@ -64,8 +97,10 @@ def ansible_exec(action, appname=None, keyfile=None, username=None):
             'list' : "univention-app list --ids-only",
             'info' : "univention-app info --as-json",
             'install' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
-            'remove' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
+            'remove'  : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
             'upgrade' : "univention-app {} --noninteractive --username {} --pwdfile {} {}".format(action, username, keyfile, appname),
+            'stall'   : "univention-app {} {}".format(action, appname),
+            'undo_stall': "univention-app {} {} --undo".format(action, appname),
             }
     return module.run_command(univention_app_cmd[action])
 
@@ -123,6 +158,14 @@ def upgrade_app(_appname, _authfile):
         and returns tuple of exit-code and stdout'''
     return ansible_exec(action='upgrade', appname=_appname, keyfile=_authfile)
 
+def stall_app(_appname, _authfile):
+    ''' stalls an app with given name and path to auth-file, uses ansible_exec() and return tuple of exit-code and stdout. '''
+    return ansible_exec(action='stall', appname=_appname, keyfile=_authfile)
+
+def undo_stall_app(_appname, _authfile):
+    ''' undos the stalling of an app with given name and path to auth-file, uses ansible_exec() and return tuple of exit-code and stdout. '''
+    return ansible_exec(action='undo_stall', appname=_appname, keyfile=_authfile)
+
 def main():
     ''' main() is an entry-point for ansible which checks app-status and installs,
         upgrades, or removes the app based on ansible state and name-parameters '''
@@ -131,7 +174,7 @@ def main():
         argument_spec = dict(
             name = dict(
                 type='str',
-                required=True
+                required=True,
                 aliases=['app']
             ),
             state = dict(
@@ -143,6 +186,11 @@ def main():
                 type='bool',
                 required=False,
                 default=False
+            ),
+            stall = dict(
+                type='str',
+                required=False,
+                choices=['yes','no']
             ),
             auth_password = dict(
                 type="str",
@@ -174,6 +222,7 @@ def main():
     app_present = check_app_present(app_name)
     app_absent = check_app_absent(app_name)
     app_upgradeable = check_app_upgradeable(app_name)
+    app_stall_taget = module.params.get('stall') # desired stalling state of the app
 
     # some basic logic-checks
     if not app_absent and not app_present: # this means the app does not exist
@@ -223,6 +272,31 @@ def main():
 
     elif app_status_target == 'absent' and app_absent:
         module.exit_json(changed=False, msg="App {} not installed. No change.".format(app_name))
+
+    if app_present and app_stall_target == 'yes':
+        #stall_app(app_name)
+        auth_file = generate_tmp_auth_file(auth_password)
+        try:
+            _stall_app = stall_app(app_name, auth_file)
+            if _stall_app[0] == 0:
+                module.exit_json(changed=True, msg="App {} successfully stalled.".format(app_name))
+            else:
+                module.fail_json(msg="an error occured while stalling {}".format(app_name))
+        finally:
+            os.remove(auth_file)
+    elif app_present and app_stall_target == 'no':
+        #undo_stall_app(app_name)
+        auth_file = generate_tmp_auth_file(auth_password)
+        try:
+            _undo_stall_app = undo_stall_app(app_name, auth_file)
+            if _undo_stall_app[0] == 0:
+                module.exit_json(changed=True, msg="App {} successfully unstalled.".format(app_name))
+            else:
+                module.fail_json(msg="an error occured while undoing the stall {}".format(app_name))
+        finally:
+            os.remove(auth_file)
+    elif app_present and app_stall_target and not app_stall_target in ['yes','no']:
+        module.fail_json(changed=False, msg="Unrecognised target state for option stall")
 
     else: # just in case ...
         module.fail_json(msg="an unknown error occured while handling {}".format(app_name))
